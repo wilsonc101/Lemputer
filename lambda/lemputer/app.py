@@ -1,4 +1,3 @@
-from flask import Markup
 import pygal
 
 from chalice import Chalice
