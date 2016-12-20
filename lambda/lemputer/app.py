@@ -13,7 +13,7 @@ app = Chalice(app_name='lemputer')
 # Create chart
 line_chart = pygal.Line(width=500, 
                         height=400, 
-                        title=SENSOR.
+                        title=SENSOR,
                         x_label_rotation=90)
 
 # Get sensor data from 
