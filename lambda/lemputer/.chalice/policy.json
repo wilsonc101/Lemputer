@@ -3,6 +3,16 @@
   "Statement": [
     {
       "Action": [
+        "sdb:Select"
+      ],
+      "Resource": [
+        "*"
+      ],
+      "Effect": "Allow",
+      "Sid": "9c1730a7312847b2819f42eef5592317"
+    },
+    {
+      "Action": [
         "logs:CreateLogGroup",
         "logs:CreateLogStream",
         "logs:PutLogEvents"
