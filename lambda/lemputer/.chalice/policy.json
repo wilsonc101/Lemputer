@@ -3,13 +3,14 @@
   "Statement": [
     {
       "Action": [
+        "sdb:PutAttributes",
         "sdb:Select"
       ],
       "Resource": [
         "*"
       ],
       "Effect": "Allow",
-      "Sid": "9c1730a7312847b2819f42eef5592317"
+      "Sid": "9ce2c8d95f0e46e38fc3a54a3587e2fb"
     },
     {
       "Action": [
