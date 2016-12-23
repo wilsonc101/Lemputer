@@ -52,27 +52,17 @@ def index(device, sensor):
     return {'title': 'Chalice with PyGal', 'body': test_html}
 
 
-@app.route('/{device}', methods=['POST'])
-def input(device):
+@app.route('/purge', methods=['POST'])
+def input():
     json_data = {}
     json_data['input'] = app.current_request.json_body
 
-    client.put_attributes(DomainName=device,
-                          ItemName=json_data['input']['date'],
-                          Attributes=[{'Name': json_data['input']['sensor'],
-                                       'Value': str(json_data['input']['value'])}])
-
-    return(device + " -- " + str(json_data))
-
-
-@app.route('/{device}/{sensor}/purge', methods=['POST'])
-def input(device, sensor):
-    json_data = {}
-    json_data['input'] = app.current_request.json_body
+    device = json_data['input']['device']
+    asensor = json_data['input']['sensor']
 
     # Check that a purge value has been posted
     if 'purge' in json_data['input']:
-        results = client.select(SelectExpression="SELECT " + sensor + \
+        results = client.select(SelectExpression="SELECT " + asensor + \
                                                 " FROM " + device)
 
         for item in results['Items']:
@@ -86,3 +76,26 @@ def input(device, sensor):
                                          Attributes=item['Attributes'])
 
     return(device + " -- " + str(json_data))
+
+
+@app.route('/{device}', methods=['POST'])
+def input(device):
+    json_data = {}
+    json_data['input'] = app.current_request.json_body
+
+    client.put_attributes(DomainName=device,
+                          ItemName=json_data['input']['date'],
+                          Attributes=[{'Name': json_data['input']['sensor'],
+                                       'Value': str(json_data['input']['value'])}])
+
+    return(device + " -- " + str(json_data))
+
+
+
+
+
+
+
+
+
+

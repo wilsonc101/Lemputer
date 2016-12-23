@@ -3,6 +3,7 @@
   "Statement": [
     {
       "Action": [
+        "sdb:DeleteAttributes",
         "sdb:PutAttributes",
         "sdb:Select"
       ],
@@ -10,7 +11,7 @@
         "*"
       ],
       "Effect": "Allow",
-      "Sid": "9ce2c8d95f0e46e38fc3a54a3587e2fb"
+      "Sid": "5105623090534f16bfaf46f57a5a9c7d"
     },
     {
       "Action": [
