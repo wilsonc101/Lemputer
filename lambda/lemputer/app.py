@@ -3,26 +3,26 @@ import boto3
 
 from chalice import Chalice
 
-# Globals
-DOMAIN_NAME = "test_db"     # This will likely stay fixed
-SENSOR = "TC_External"      # This will likely be passed in with the request
+# Testing Globals
+# DOMAIN_NAME = "test_db"
+# SENSOR = "TC_External"
 
 # Setup web app
 app = Chalice(app_name='lemputer')
 client = boto3.client("sdb")
 
 
-@app.route('/', methods=['GET'])
-def index():
+@app.route('/{device}/{sensor}', methods=['GET'])
+def index(device, sensor):
     # Create chart
     line_chart = pygal.Line(width=500, 
                             height=400, 
-                            title=SENSOR,
+                            title=sensor,
                             x_label_rotation=90)
 
     # Get sensor data from 
-    get_resp = client.select(SelectExpression="SELECT " + SENSOR + \
-                                              " FROM " + DOMAIN_NAME)
+    get_resp = client.select(SelectExpression="SELECT " + sensor + \
+                                              " FROM " + device)
 
     # Generate chart and HTML data from SDB data
     data_str = str()
@@ -52,7 +52,7 @@ def index():
     return {'title': 'Chalice with PyGal', 'body': test_html}
 
 
-@app.route('/{device}', methods=['POST', 'PUT'])
+@app.route('/{device}', methods=['POST'])
 def input(device):
     json_data = {}
     json_data['input'] = app.current_request.json_body
@@ -61,5 +61,28 @@ def input(device):
                           ItemName=json_data['input']['date'],
                           Attributes=[{'Name': json_data['input']['sensor'],
                                        'Value': str(json_data['input']['value'])}])
+
+    return(device + " -- " + str(json_data))
+
+
+@app.route('/{device}/{sensor}/purge', methods=['POST'])
+def input(device, sensor):
+    json_data = {}
+    json_data['input'] = app.current_request.json_body
+
+    # Check that a purge value has been posted
+    if 'purge' in json_data['input']:
+        results = client.select(SelectExpression="SELECT " + sensor + \
+                                                " FROM " + device)
+
+        for item in results['Items']:
+            # Convert name to date object
+            item_date = datetime.datetime.strptime(item['Name'], '%Y-%m-%dT%H:%M:%S')
+
+            # Delete item if older than a day
+            if item_date < datetime.datetime.now() - datetime.timedelta(days=1):
+                client.delete_attributes(DomainName=device,
+                                         ItemName=item['Name'],
+                                         Attributes=item['Attributes'])
 
     return(device + " -- " + str(json_data))
