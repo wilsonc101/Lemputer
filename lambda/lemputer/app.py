@@ -1,13 +1,10 @@
 import pygal
 import boto3
+import datetime
 
 from chalice import Chalice
 
-# Testing Globals
-# DOMAIN_NAME = "test_db"
-# SENSOR = "TC_External"
-
-KNOWN_DEVICES = ['test_db']     # Should be in a DB but not yet...
+KNOWN_DEVICES = ['lemon']     # Should be in a DB but not yet...
 
 # Setup web app
 app = Chalice(app_name='lemputer')
@@ -20,7 +17,13 @@ def index(device, sensor):
     line_chart = pygal.Line(width=500, 
                             height=400, 
                             title=sensor,
-                            x_label_rotation=90)
+                            x_label_rotation=90,
+                            x_labels_major_count=16,
+                            show_minor_y_labels=True,
+                            show_minor_x_labels=False,
+                            show_only_major_dots=True,
+                            dots_size=3,
+                            font_family="Arial, Helvetica, sans-serif")
 
     # Get sensor data from 
     get_resp = client.select(SelectExpression="SELECT " + sensor + \
@@ -45,12 +48,14 @@ def index(device, sensor):
 <embed type="image/svg+xml" src={0} width=600 height=500>
 </div>""".format(graph)
 
-
-    return {'title': 'Chalice with PyGal', 'body': html_body}
+    return {'title': 'Lemputer - ' + device, 
+            'body': html_body}
 
 
 @app.route('/{device}', methods=['POST'])
 def input(device):
+    device = str(device)
+
     json_data = {}
     json_data['input'] = app.current_request.json_body
         
@@ -59,16 +64,29 @@ def input(device):
         raise BadRequestError("Unknown Device")
 
     try:
+        # Fix types
         record_date = json_data['input']['date']
+        str_purge = str(json_data['input']['purge'])
+        purge = eval(json_data['input']['purge'])
         data = list(json_data['input']['data'])
-        purge = bool(json_data['input']['data']['purge'])
-
     except:
         raise BadRequestError("Bad data")
 
-    client.put_attributes(DomainName=device,
-                          ItemName=record_date
-                          Attributes=data)
+    try:
+        # Loop through posted list, fix types - must be strings for SDB
+        corrected_data = list()
+        for i in data:
+            data_section = dict()
+            data_section['Name'] = str(i['Name'])
+            data_section['Value'] = str(i['Value'])
+            corrected_data.append(data_section)
+
+        client.put_attributes(DomainName=device,
+                              ItemName=record_date,
+                              Attributes=corrected_data)
+    except:
+        raise BadRequestError("Failed to write to database")
+
 
     # If purge requests, clear items older than 1 day
     if purge:
@@ -86,14 +104,6 @@ def input(device):
                                          Attributes=item['Attributes'])
     
 
-    return(device + " -- " + str(json_data))
-
-
-
-
-
-
-
-
+    return(str({device: "done"}))
 
 
