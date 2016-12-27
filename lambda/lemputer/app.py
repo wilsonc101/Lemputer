@@ -7,6 +7,8 @@ from chalice import Chalice
 # DOMAIN_NAME = "test_db"
 # SENSOR = "TC_External"
 
+KNOWN_DEVICES = ['test_db']     # Should be in a DB but not yet...
+
 # Setup web app
 app = Chalice(app_name='lemputer')
 client = boto3.client("sdb")
@@ -25,18 +27,13 @@ def index(device, sensor):
                                               " FROM " + device)
 
     # Generate chart and HTML data from SDB data
-    data_str = str()
     values = list()
     labels = list()
     for attribs in get_resp['Items']:
-        data_str = data_str + attribs['Name'] + "<br>"
 
         for data in attribs['Attributes']:
-             data_str = data_str + data['Name'] + " -- " + data['Value'] + "<br>"
              values.append(float(data['Value']))
              labels.append(attribs['Name'].split("T")[1])
-
-        data_str = data_str + "<br><br>"
 
     # Populate chart
     line_chart.add("temp (C)", values)
@@ -44,25 +41,38 @@ def index(device, sensor):
     graph = line_chart.render_data_uri()
 
     # Generate HTML result
-    test_html = """    <div id="graph_panel">      
+    html_body = """    <div id="graph_panel">      
 <embed type="image/svg+xml" src={0} width=600 height=500>
 </div>""".format(graph)
 
 
-    return {'title': 'Chalice with PyGal', 'body': test_html}
+    return {'title': 'Chalice with PyGal', 'body': html_body}
 
 
-@app.route('/purge', methods=['POST'])
-def input():
+@app.route('/{device}', methods=['POST'])
+def input(device):
     json_data = {}
     json_data['input'] = app.current_request.json_body
+        
+    # Check the device is known to us
+    if device not in KNOWN_DEVICES:
+        raise BadRequestError("Unknown Device")
 
-    device = json_data['input']['device']
-    asensor = json_data['input']['sensor']
+    try:
+        record_date = json_data['input']['date']
+        data = list(json_data['input']['data'])
+        purge = bool(json_data['input']['data']['purge'])
 
-    # Check that a purge value has been posted
-    if 'purge' in json_data['input']:
-        results = client.select(SelectExpression="SELECT " + asensor + \
+    except:
+        raise BadRequestError("Bad data")
+
+    client.put_attributes(DomainName=device,
+                          ItemName=record_date
+                          Attributes=data)
+
+    # If purge requests, clear items older than 1 day
+    if purge:
+        results = client.select(SelectExpression="SELECT *" + \
                                                 " FROM " + device)
 
         for item in results['Items']:
@@ -74,19 +84,7 @@ def input():
                 client.delete_attributes(DomainName=device,
                                          ItemName=item['Name'],
                                          Attributes=item['Attributes'])
-
-    return(device + " -- " + str(json_data))
-
-
-@app.route('/{device}', methods=['POST'])
-def input(device):
-    json_data = {}
-    json_data['input'] = app.current_request.json_body
-
-    client.put_attributes(DomainName=device,
-                          ItemName=json_data['input']['date'],
-                          Attributes=[{'Name': json_data['input']['sensor'],
-                                       'Value': str(json_data['input']['value'])}])
+    
 
     return(device + " -- " + str(json_data))
 
