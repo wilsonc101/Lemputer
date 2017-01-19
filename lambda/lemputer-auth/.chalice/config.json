@@ -1,0 +1,5 @@
+{
+  "lambda_arn": "arn:aws:lambda:eu-west-1:377006546830:function:lemputer-auth", 
+  "app_name": "lemputer-auth", 
+  "stage": "dev"
+}
