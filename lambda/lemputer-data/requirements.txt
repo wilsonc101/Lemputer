@@ -1,0 +1,4 @@
+boto3==1.4.4
+pyjwt==1.4.2
+pycrypto==2.6.1
+cryptography==1.7.1

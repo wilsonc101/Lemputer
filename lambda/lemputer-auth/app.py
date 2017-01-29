@@ -4,7 +4,11 @@ import boto3
 import botocore
 import jwt
 import datetime
+import json
 
+from base64 import urlsafe_b64decode, b64decode
+from Crypto.Util.number import bytes_to_long
+from Crypto.PublicKey import RSA
 from chalice import Chalice
 
 app = Chalice(app_name='lemputer-auth')
@@ -48,6 +52,41 @@ new_password_form = """<b>Your password has expired.</b><br><br>
 login_success = "<b>You're now logged in</b>"
 
 tomorrow = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+def _base64_pad(s):
+    return (s + '=' * (4 - len(s) % 4))
+
+
+def get_token_data(jwk_sets, token):
+    # Get token segements and elements
+    header, payload, signature = str(token).split(".")
+    header_str = urlsafe_b64decode(header)
+    header_json = json.loads(header_str, 'utf-8')
+
+    kid = header_json['kid']
+    alg = header_json['alg']
+
+    # Find matching kid and algorithm, then verify
+    for jwks in jwk_sets['keys']:
+        if (jwks['kid'] == kid and jwks['alg'] == alg):
+            e_b64 = _base64_pad(jwks['e'])
+            n_b64 = _base64_pad(jwks['n'])
+
+            e_bytes = urlsafe_b64decode(e_b64)
+            n_bytes = urlsafe_b64decode(n_b64)
+
+            modulus = bytes_to_long(e_bytes)
+            exponant = bytes_to_long(n_bytes)
+
+            public_key = RSA.construct((exponant, modulus))
+            public_key_pem = public_key.publickey().exportKey()
+    try:
+
+                token_data = jwt.decode(token, key=public_key_pem, algorithms=[alg])
+                return(True, token_data)
+
+    except:
+        return(False, str(sys.exc_info()[1]))
 
 
 def set_new_password(client, session_id,
@@ -102,6 +141,31 @@ def do_login(client, auth_parameters, auth_flow="ADMIN_NO_SRP_AUTH"):
     except:
         return(False, str(sys.exc_info()[1]))
 
+
+def _get_user_groups(client, userpool_id, username):
+    try:
+        response = client.admin_list_groups_for_user(Username=username,
+                                                     UserPoolId=userpool_id)
+
+        return(True, response['Groups'])
+
+    except:
+        return(False, sys.exc_info()[1])
+
+
+def is_admin(client, userpool_id, username, admin_group="admin"):
+    result, data = _get_user_groups(client, userpool_id, username)
+
+    if result:
+        admin_user = False
+        for group in data:
+            if group['GroupName'] == admin_group:
+                admin_user = True
+
+        return(result, admin_user)
+
+    else:
+        return(result, data)
 
 
 
@@ -266,19 +330,54 @@ def auth_reset_password():
 def read_cookie():
     try:
         cookie_data = app.current_request.headers['cookie']
-        access_token = cookie_data.split("=")[1]
-        token_data = jwt.decode(access_token, verify=False)
+        for cookie in cookie_data.split("; "):
+            cookie_name = cookie.split("=")[0]
+            cookie_content = cookie.split("=")[1]
+            if cookie_name == "access":
+                access_token = cookie_content
+            elif cookie_name == "username":
+                username = cookie_content
+            elif cookie_name == "session":
+                session_id = cookie_content
 
-        user_name = token_data['username']
-        token_expiry = datetime.datetime.fromtimestamp(token_data['exp']).strftime("%a, %d %b %Y %H:%M:%S GMT")
-        token_issued = datetime.datetime.fromtimestamp(token_data['iat']).strftime("%a, %d %b %Y %H:%M:%S GMT")
+        jwk_sets = {"keys":[{"alg":"RS256",
+                             "e":"AQAB",
+                             "kid":"lgsLnMJM7xXhJ7m2ee0zVgjfONBQ8jxIJ2KwYRc+fl8=",
+                             "kty":"RSA",
+                             "n":"l6iOwQSvbiV-JxUWBYXtw4uPEdqbne9ttbfY4JbF4-3LRLTJYaQ8oNjCpFeVx_H66-extpAyybemZ3H2w5wx1rppyToezerdo9-WW2F2vsSEbLKR-3tEYsYjfFsE_mq7QLP24Y_Il5npeUu7KS7malqvviwU3E3EqcTaNWRULMcVlMKVqi3gt0VJ_QsEC6iS5mmmhlLaxo51APHtUmerdAKwlQPLo0I-rf0_BEUC4KohQYjh4YdZnqiYni_8xF4jJYQe9cD-TM8lV2WgxlgmHQhGfjrXAM7wvHoQE91WGP-tZ5qj4wBi3SBuPZ6MJJVxTDjjo-j2oDSuaK3NJurfow",
+                             "use":"sig"},
+                            {"alg":"RS256",
+                             "e":"AQAB",
+                             "kid":"Gqan94fSKgyihKi9dzQvHRmXHOAwjB0Nx/UcCGZ5wUo=",
+                             "kty":"RSA",
+                             "n":"pBeavjdnV1lbotXiIQs69Z8IL8vRomQBaRNht7K5GgsA75Jh6irXiRfK6wIPzVCWcnwRUNclKGAziTYeiaounKayqyUAEpemKhT8lXrbvSiuroWcnbUjr7dUruSyemS-gb7K3JdJHIdJ2ehSxVjAogI0GKFgecHNf0qO2TgHm0Weoj67ZUxYFzkLr_FqHCwr5fFbEiW3Ktxev9ZGjqRIYGiitca5C_oRuGKbQLIaPOTPwFpTUOVPwu5p2xdQyLuUM6zbS_TEaR7MJ0hq7IxRwKIZYeN85zIHDR22k_W7PSmNR-MP5RJqOfZL_Pg-U8V8UDg5cWI5h4Wp34DxIJGB-w",
+                             "use":"sig"}]}
+
+        result, data = get_token_data(jwk_sets, access_token)
+
+        if result:
+            if 'username' in data:
+                result, admin_user = is_admin(idp_client,
+                                              cognito_pool_id,
+                                              data['username'],
+                                              admin_group="test")
+                if admin_user:
+                    response_text = data['username'] + " is an admin"
+                else:
+                    response_text = data['username'] + " is NOT an admin"
+
+        else:
+            response_text = data
+
+
 
         return {'title': 'Lemputer - Auth',
-                'body': 'User - ' + user_name + ' --- expires - ' + token_expiry}
+                'body': response_text}
+
 
     except:
         return {'title': 'Lemputer - Auth',
-                'body': login_form + "<br><br><b>You don't appear to be logged in.</b>"}
+                'body': login_form + "<br><br><b>You don't appear to be logged in.</b><br><br><br><hr><br><br>" + str(sys.exc_info()[1])}
 
 
 @app.route('/clear')
