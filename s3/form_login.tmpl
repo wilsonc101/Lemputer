@@ -1,0 +1,14 @@
+<div class="login_form">
+  <form action="/dev/authin" method="POST">
+    <label><b>Username</b></label>
+    <input type="text" placeholder="Enter Username" name="username" required>
+    <br>
+    <label><b>Password</b></label>
+    <input type="password" placeholder="Enter Password" name="password" required>
+    <input type="submit" value="Login">
+  </form>
+</div>
+<br>
+<hr>
+<br>
+{{ error_message }}

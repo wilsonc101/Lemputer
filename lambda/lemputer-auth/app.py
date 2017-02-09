@@ -5,51 +5,28 @@ import botocore
 import jwt
 import datetime
 import json
+import jinja2
 
 from base64 import urlsafe_b64decode, b64decode
 from Crypto.Util.number import bytes_to_long
 from Crypto.PublicKey import RSA
 from chalice import Chalice
 
+
 app = Chalice(app_name='lemputer-auth')
 
 idp_client = boto3.client('cognito-idp')
+s3_client = boto3.client('s3', region_name="eu-west-1")
+
 cognito_pool_id = "eu-west-1_MGtYSsW3S"
 cognito_app_id = "28n5vtjaeso7cl89m8d522t5dv"
+s3_bucket = "lemputer"
 
 auth_parameters_template = {"UserPoolId": None,
                            "ClientId": None,
                            "AuthParameters": {"USERNAME": None,
                                               "PASSWORD": None}}
 
-login_form = """<form action="/dev/authin" method="POST">
-<label><b>Username</b></label>
-<input type="text" placeholder="Enter Username" name="username" required>
-<br>
-<label><b>Password</b></label>
-<input type="password" placeholder="Enter Password" name="password" required>
-<button type="submit">Login</button>
-</form>"""
-
-reset_password_form = """<b>You must provide a new password along with your verification code delivered via SMS or email.</b><br><br>
-<form action="/dev/resetpass" method="POST">
-<label><b>Verification Code</b></label>
-<input type="text" placeholder="Enter Code" name="code" required>
-<br>
-<label><b>New Password</b></label>
-<input type="password" placeholder="Enter Password" name="password" required>
-<button type="submit">Login</button>
-</form>"""
-
-new_password_form = """<b>Your password has expired.</b><br><br>
-<form action="/dev/newpass" method="POST">
-<label><b>New Password</b></label>
-<input type="password" placeholder="Enter Password" name="password" required>
-<button type="submit">Login</button>
-</form>"""
-
-
-login_success = "<b>You're now logged in</b>"
 
 tomorrow = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime("%a, %d %b %Y %H:%M:%S GMT")
 
@@ -142,6 +119,43 @@ def do_login(client, auth_parameters, auth_flow="ADMIN_NO_SRP_AUTH"):
         return(False, str(sys.exc_info()[1]))
 
 
+def _get_user_attributes(client, userpool_id, username):
+    try:
+        response = client.admin_get_user(Username=username,
+                                         UserPoolId=userpool_id)
+
+        return(True, response['UserAttributes'])
+
+    except:
+        return(False, str(sys.exc_info()[1]))
+
+
+def set_user_attribute(client, userpool_id, username, attrib_name, attrib_value):
+    try:
+        response = client.admin_update_user_attributes(Username=username,
+                                                       UserPoolId=userpool_id,
+                                                       UserAttributes=[{'Name': attrib_name,
+                                                                        'Value': attrib_value}])
+        return(True, None)
+
+    except:
+        return(False, str(sys.exc_info()[1]))
+
+
+def has_attribute(client, userpool_id, username, attribute="email"):
+    result, data = _get_user_attributes(client, userpool_id, username)
+
+    if result:
+        for item in data:
+            if item['Name'] == attribute:
+                return(True, item['Value'])
+
+        return(False, None)
+
+    else:
+        return(result, data)
+
+
 def _get_user_groups(client, userpool_id, username):
     try:
         response = client.admin_list_groups_for_user(Username=username,
@@ -168,16 +182,36 @@ def is_admin(client, userpool_id, username, admin_group="admin"):
         return(result, data)
 
 
+def render_s3_template(client, bucket, template_name, content=None):
+    # If no conent is supplied, set to empty dict
+    if content is None:
+        content = dict()
+
+    file_object = s3_client.get_object(Bucket=bucket, Key=template_name)
+    file_content = file_object['Body'].read()
+    rendered_html = jinja2.Environment().from_string(file_content).render(content)
+
+    return(rendered_html)
+
 
 @app.route('/authform')
 def auth_form():
+    style_css = render_s3_template(s3_client, s3_bucket, "style.css")
+    login_form = render_s3_template(s3_client, s3_bucket, "form_login.tmpl")
     return {'title': 'Lemputer - Auth',
+            'style': style_css,
             'body': login_form}
 
 
 @app.route('/authin', methods=['POST'], 
            content_types=['application/x-www-form-urlencoded'])
 def auth_in():
+    style_css = render_s3_template(s3_client, s3_bucket, "style.css")
+    login_form = render_s3_template(s3_client, s3_bucket, "form_login.tmpl")
+    new_password_form = render_s3_template(s3_client, s3_bucket, "form_newpassword.tmpl")
+    reset_password_form = render_s3_template(s3_client, s3_bucket, "form_passwordreset.tmpl")
+    login_success = render_s3_template(s3_client, s3_bucket, "loginsuccess.tmpl")
+
     parsed = urlparse.parse_qs(app.current_request.raw_body)
     username = parsed['username'][0]
     password = parsed['password'][0]
@@ -201,6 +235,7 @@ def auth_in():
                 id_token = login_response['AuthenticationResult']['IdToken']
 
                 return {'title': 'Lemputer - Auth',
+                        'style': style_css,
                         'body': login_success,
                         'username': 'username=' + username + ';' +
                                       'expires=' + tomorrow + ';' +
@@ -215,6 +250,7 @@ def auth_in():
                 # New required (because a temporary password is set)
                     session_id = login_response[1]['Session']
                     return {'title': 'Lemputer - Auth',
+                            'style': style_css,
                             'body': new_password_form,
                             'session_id': 'session=' + session_id + ';' +
                                           'expires=' + tomorrow + ';' +
@@ -226,25 +262,36 @@ def auth_in():
                 elif login_response[1]['ChallengeName'] == "PASSWORD_RESET_REQUIRED":
                 # Password reset required - no session cookie present
                     return {'title': 'Lemputer - Auth',
+                            'style': style_css,
                             'body': reset_password_form,
                             'username': 'username=' + username + ';' +
                                         'expires=' + tomorrow + ';' +
                                         'path=/dev'}
 
         else:
+            error_message = "Sorry, something went wrong. Please try again"
+            login_form = render_s3_template(s3_client, s3_bucket, "form_login.tmpl", {"error_message": error_message})
+
             return {'title': 'Lemputer - Auth',
-                    'body': login_form + '<br><br><b>Sorry, something went wrong logging you in. Please try again.</b><br><br><hr>' + login_response[1],
+                    'style': style_css,
+                    'body': login_form,
                     'access_token': 'access='}
 
     except:
+        error_message = "Sorry, something went wrong. Please try again" + str(sys.exc_info()[1])
+        login_form = render_s3_template(s3_client, s3_bucket, "form_login.tmpl", {"error_message": error_message})
+
         return {'title': 'Lemputer - Auth',
-                'body': login_form + '<br><br><b>Sorry, there was an error logging you in. Please try again.</b><br><br><hr>' + str(sys.exc_info()[1]),
+                'style': style_css,
+                'body': login_form,
                 'access_token': 'access='}
 
 
 @app.route('/newpass', methods=['POST'], 
            content_types=['application/x-www-form-urlencoded'])
 def auth_new_password():
+    style_css = render_s3_template(s3_client, s3_bucket, "style.css")
+
     try:
         # Extract cookie data
         cookie_data = app.current_request.headers['cookie']
@@ -274,7 +321,10 @@ def auth_new_password():
             refresh_token = response['AuthenticationResult']['RefreshToken']
             id_token = response['AuthenticationResult']['IdToken']
 
+            login_success = render_s3_template(s3_client, s3_bucket, "loginsuccess.tmpl")
+
             return {'title': 'Lemputer - Auth',
+                    'style': style_css,
                     'body': login_success,
                     'username': 'username=' + username + ';' +
                                 'expires=' + tomorrow + ';' +
@@ -285,18 +335,25 @@ def auth_new_password():
                                     'path=/dev'}
 
         else:
+            error_message = "Sorry, something went wrong. Please try again"
+            login_form = render_s3_template(s3_client, s3_bucket, "form_login.tmpl", {"error_message": error_message})
+
             return {'title': 'Lemputer - Auth',
-                    'body': login_form + '<br><br><b>Sorry, something went wrong logging you in. Please try again.</b>',
+                    'style': style_css,
+                    'body': login_form,
                     'access_token': 'access='}
 
     except:
         return {'title': 'Lemputer - Auth',
+                'style': style_css,
                 'body': str(sys.exc_info()[1])}
 
 
 @app.route('/resetpass', methods=['POST'], 
            content_types=['application/x-www-form-urlencoded'])
 def auth_reset_password():
+    style_css = render_s3_template(s3_client, s3_bucket, "style.css")
+
     # Extract cookie data
     cookie_data = app.current_request.headers['cookie']
     for cookie in cookie_data.split("; "):
@@ -318,17 +375,25 @@ def auth_reset_password():
         response = reset_password(idp_client, cognito_app_id, username, verification_code, password)
         assert response, "error reseting password"
 
+        error_message = "Your password has been reset."
+        login_form = render_s3_template(s3_client, s3_bucket, "form_login.tmpl", {"error_message": error_message})
+
         return {'title': 'Lemputer - Auth',
-                'body': login_form + '<br><br><b>Your password has been reset.</b>'}
+                'style': style_css,
+                'body': login_form}
 
     except:
         return {'title': 'Lemputer - Auth',
-                'body': 'error -- ' + str(sys.exc_info()[1])}
+                'style': style_css,
+                'body': str(sys.exc_info()[1])}
 
 
 @app.route('/read')
 def read_cookie():
+    style_css = render_s3_template(s3_client, s3_bucket, "style.css")
+
     try:
+
         cookie_data = app.current_request.headers['cookie']
         for cookie in cookie_data.split("; "):
             cookie_name = cookie.split("=")[0]
@@ -355,35 +420,59 @@ def read_cookie():
 
         result, data = get_token_data(jwk_sets, access_token)
 
+        values = dict()
         if result:
             if 'username' in data:
+                values['username'] = data['username']
+
+                # Get admin group membership
                 result, admin_user = is_admin(idp_client,
                                               cognito_pool_id,
                                               data['username'],
                                               admin_group="test")
                 if admin_user:
-                    response_text = data['username'] + " is an admin"
+                    values['is_admin'] = "True"
                 else:
-                    response_text = data['username'] + " is NOT an admin"
+                    values['is_admin'] = "False"
+
+                # Get lemputer name
+                attrib_name = "custom:lemputer"
+                result, attrib_value = has_attribute(idp_client,
+                                                     cognito_pool_id,
+                                                     data['username'],
+                                                     attribute=attrib_name)
+
+                if attrib_value is not None:
+                    values['lemputer'] = attrib_value
+                else:
+                    values['lemputer'] = "Not Set"
+
+                html_content = render_s3_template(s3_client, s3_bucket, "userinfo.tmpl", values)
 
         else:
-            response_text = data
-
-
+            html_content = "Ooops, something went wrong!"
 
         return {'title': 'Lemputer - Auth',
-                'body': response_text}
-
+                'style': style_css,
+                'body': html_content}
 
     except:
+        error_message = "You don't appear to be logged in.<br><br>" + str(sys.exc_info()[1])
+        login_form = render_s3_template(s3_client, s3_bucket, "form_login.tmpl", {"error_message": error_message})
+
         return {'title': 'Lemputer - Auth',
-                'body': login_form + "<br><br><b>You don't appear to be logged in.</b><br><br><br><hr><br><br>" + str(sys.exc_info()[1])}
+                'style': style_css,
+                'body': login_form}
 
 
 @app.route('/clear')
 def clear_cookie():
+    error_message = "You're now logged out."
+    login_form = render_s3_template(s3_client, s3_bucket, "form_login.tmpl", {"error_message": error_message})
+
     return {'title': 'Lemputer - Auth',
-            'body': login_form + "<br><br><b>You've been logged out.</b>",
+            'body': login_form,
             'access_token': 'access=',
             'session_id': 'session=',
             'username': 'username='}
+
